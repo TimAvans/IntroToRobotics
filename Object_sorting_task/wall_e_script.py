@@ -108,6 +108,7 @@ if clientID != -1:
             perform_random_walk()
         else:
             show_image(get_image_small_cam())
+            show_image(get_image_top_cam())
             set_speed(100, 100)
             print(get_sonar_sensor())
     # End connection
