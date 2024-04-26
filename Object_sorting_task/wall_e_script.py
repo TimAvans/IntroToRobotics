@@ -93,14 +93,23 @@ def show_image(image):
 
 # END OF FUNCTIONS
 
+def perform_random_walk():
+    set_speed(5, 5)
+
+CONST_NEAREST_DISTANCE = 0.22
+
 
 # MAIN CONTROL LOOP
 if clientID != -1:
     print('Connected')
     while True:
         # your code goes here
-        set_speed(0, 0)
-
+        if  get_sonar_sensor() == -1:
+            perform_random_walk()
+        else:
+            show_image(get_image_small_cam())
+            set_speed(100, 100)
+            print(get_sonar_sensor())
     # End connection
     sim.simxGetPingTime(clientID)
     sim.simxFinish(clientID)
