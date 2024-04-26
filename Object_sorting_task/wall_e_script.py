@@ -94,23 +94,62 @@ def show_image(image):
 # END OF FUNCTIONS
 
 def perform_random_walk():
-    set_speed(5, 5)
+    left_motor = np.random.randint(1, 15)
+    right_motor = np.random.randint(1,15)
+    set_speed(left_motor, right_motor)
 
+def in_range(pixel, color_bottom, color_top):
+    if  pixel[0] < color_bottom[0] or pixel[0] > color_top[0]:
+        return False
+    if  pixel[1] < color_bottom[1] or pixel[1] > color_top[1]:
+        return False
+    if  pixel[2] < color_bottom[2] or pixel[2] > color_top[2]:
+        return False
+    return True
+
+def spot_cube(image, color_bottom, color_top):
+    pixel_locations_x = []
+    pixel_locations_y = []
+    for y, row in enumerate(image):
+        for x, pixel in enumerate(row):
+            if  in_range(pixel, color_bottom, color_top):
+                print("found")
+                pixel_locations_x.append(x)
+                pixel_locations_y.append(y) 
+    # show_image(image)
+    if  pixel_locations_x == [] and pixel_locations_y == []:
+        return 0, 0
+    return np.mean(pixel_locations_x), np.mean(pixel_locations_y)
+
+def move_to_target(x, y):
+    left_motor = 2
+    right_motor = 2
+
+    if  x > CONST_SCREEN_CENTER[0]:
+        left_motor += 15
+        print("Left")
+    else:
+        right_motor += 15
+        print("Right")
+    #TODO: Adjust speed to distance of object        
+    set_speed(left_motor, right_motor)
+
+    
 CONST_NEAREST_DISTANCE = 0.22
-
-
+CONST_YELLOW_TOP = [255, 255, 80]
+CONST_YELLLOW_BOTTOM = [235, 235, 0]
+CONST_SCREEN_CENTER = (32,32)
 # MAIN CONTROL LOOP
 if clientID != -1:
     print('Connected')
     while True:
         # your code goes here
-        if  get_sonar_sensor() == -1:
+        target_location = spot_cube(get_image_top_cam(), CONST_YELLLOW_BOTTOM, CONST_YELLOW_TOP)
+        print(target_location)
+        if  target_location == (0, 0):
             perform_random_walk()
-        else:
-            show_image(get_image_small_cam())
-            show_image(get_image_top_cam())
-            set_speed(100, 100)
-            print(get_sonar_sensor())
+        else:  
+            move_to_target(target_location[0], target_location[1])
     # End connection
     sim.simxGetPingTime(clientID)
     sim.simxFinish(clientID)
