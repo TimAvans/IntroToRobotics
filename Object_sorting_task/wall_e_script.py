@@ -1,102 +1,46 @@
-import colorsys
-import sim
-import numpy as np
+from mindstorms import *
+from coppeliasim_zmqremoteapi_client import *
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
-sim.simxFinish(-1)
-clientID = sim.simxStart('127.0.0.1', 19999, True, True, 5000, 5)
+client = RemoteAPIClient()
+sim = client.require("sim")
 
+# HANDLES FOR ACTUATORS AND SENSORS
+robot = Robot_OS(sim, DeviceNames.ROBOT_OS)
 
-# FUNCTIONS TO INTERFACE WITH THE ROBOT
-def compress():
-    sim.simxSetIntegerSignal(clientID=clientID, signalName="compress", signalValue=1,
-                             operationMode=sim.simx_opmode_blocking)
+top_image_sensor = ImageSensor(sim, DeviceNames.TOP_IMAGE_SENSOR_OS)
+small_image_sensor = ImageSensor(sim, DeviceNames.SMALL_IMAGE_SENSOR_OS)
 
+left_motor = Motor(sim, DeviceNames.MOTOR_LEFT_OS, Direction.CLOCKWISE)
+right_motor = Motor(sim, DeviceNames.MOTOR_RIGHT_OS, Direction.CLOCKWISE)
 
-def set_speed(speed_l, speed_r):
-    sim.simxSetStringSignal(clientID=clientID, signalName="motors", signalValue=sim.simxPackFloats([speed_l, speed_r]),
-                            operationMode=sim.simx_opmode_blocking)
-
-
-def get_battery():
-    return sim.simxGetStringSignal(clientID=clientID, signalName="battery",
-                                   operationMode=sim.simx_opmode_blocking)
-
-
-def get_bumper_sensor():
-    # Bumper reading as 3-dimensional force vector
-    bumper_force_vector = [0, 0, 0]
-    return_code, bumper_force_vector_packed = sim.simxGetStringSignal(clientID=clientID, signalName="bumper_sensor",
-                                                                      operationMode=sim.simx_opmode_blocking)
-    if return_code == 0:
-        bumper_force_vector = sim.simxUnpackFloats(bumper_force_vector_packed)
-    return bumper_force_vector
-
-
-def get_sonar_sensor():
-    # Sonar reading as distance to closest object detected by it, -1 if no data
-    sonar_dist = -1
-    return_code, sonar_dist_packed = sim.simxGetStringSignal(clientID=clientID, signalName="sonar_sensor",
-                                                             operationMode=sim.simx_opmode_blocking)
-    if return_code == 0:
-        sonar_dist = sim.simxUnpackFloats(sonar_dist_packed)
-    return sonar_dist
-
-
-def get_image_small_cam():
-    # Image from the small camera
-    return_code, return_value = sim.simxGetStringSignal(clientID=clientID, signalName="small_cam_image",
-                                                        operationMode=sim.simx_opmode_blocking)
-    if return_code == 0:
-        image = sim.simxUnpackFloats(return_value)
-        res = int(np.sqrt(len(image) / 3))
-        return image_correction(image, res)
-    else:
-        return return_code
-
-
-def get_image_top_cam():
-    # Image from the top camera
-    return_code, return_value = sim.simxGetStringSignal(clientID=clientID, signalName="top_cam_image",
-                                                        operationMode=sim.simx_opmode_blocking)
-    if return_code == 0:
-        image = sim.simxUnpackFloats(return_value)
-        res = int(np.sqrt(len(image) / 3))
-        return image_correction(image, res)
-    else:
-        return return_code
-
-
-# HELPER FUNCTIONS
-def image_correction(image, res):
-    """
-    This function can be applied to images coming directly out of CoppeliaSim.
-    It turns the 1-dimensional array into a more useful res*res*3 array, with the first
-    two dimensions corresponding to the coordinates of a pixel and the third dimension to the
-    RGB values. Aspect ratio of the image is assumed to be square (1x1).
-
-    :param image: the image as a 1D array
-    :param res: the resolution of the image, e.g. 64
-    :return: an array of shape res*res*3
-    """
-
-    image = [int(x * 255) for x in image]
-    image = np.array(image).reshape((res, res, 3))
-    image = np.flip(m=image, axis=0)
-    return image
-
-
+# HELPER FUNCTION
 def show_image(image):
     plt.imshow(image)
     plt.show()
 
-# END OF FUNCTIONS
+def get_image_top_cam():
+    # Image from the top camera
+    return top_image_sensor.get_image()
+
+def get_image_bottom_cam():
+    # Image from the bottom camera
+    return small_image_sensor.get_image()
+
+def set_speed(speed_l, speed_r):
+    left_motor.run(speed_l)
+    right_motor.run(speed_r)
 
 def perform_random_walk():
+    speed = 5
     left_motor = np.random.randint(1, 15)
     right_motor = np.random.randint(1,15)
-    set_speed(left_motor, right_motor)
+    if np.random.randint(1, 10) <= 3:
+        if np.random.choice([True, True, False]):
+            set_speed(0, 2)
+        else:
+            set_speed(2, 0)
 
 def in_range(pixel, color_bottom, color_top):
     if  pixel[0] < color_bottom[0] or pixel[0] > color_top[0]:
@@ -113,46 +57,90 @@ def spot_cube(image, color_bottom, color_top):
     for y, row in enumerate(image):
         for x, pixel in enumerate(row):
             if  in_range(pixel, color_bottom, color_top):
-                print("found")
                 pixel_locations_x.append(x)
                 pixel_locations_y.append(y) 
-    # show_image(image)
-    if  pixel_locations_x == [] and pixel_locations_y == []:
-        return 0, 0
-    return np.mean(pixel_locations_x), np.mean(pixel_locations_y)
+    return pixel_locations_x, pixel_locations_y
+
+def avoid_wall(image, color_bottom, color_top):
+    pixel_locations_x = []
+    pixel_locations_y = []
+    for y, row in enumerate(image):
+        for x, pixel in enumerate(row):
+            if  in_range(pixel, color_bottom, color_top):
+                pixel_locations_x.append(x)
+                pixel_locations_y.append(y)  
+    if	len(pixel_locations_x) > 50 or len(pixel_locations_y) > 50:
+        set_speed(10, 0)
 
 def move_to_target(x, y):
     left_motor = 2
     right_motor = 2
 
     if  x > CONST_SCREEN_CENTER[0]:
-        left_motor += 15
+        left_motor += 2
         print("Left")
     else:
-        right_motor += 15
+        right_motor += 2
         print("Right")
     #TODO: Adjust speed to distance of object        
     set_speed(left_motor, right_motor)
 
-    
 CONST_NEAREST_DISTANCE = 0.22
 CONST_YELLOW_TOP = [255, 255, 80]
 CONST_YELLLOW_BOTTOM = [235, 235, 0]
+CONST_BROWN_TOP = [255, 100, 70]
+CONST_BROWN_BOTTOM = [20, 0, 0]
+CONST_GREEN_TOP = [50, 255, 50]
+CONST_GREEN_BOTTOM = [0, 150, 0]
+CONST_RED_TOP = [255, 20, 20]
+CONST_RED_BOTTOM = [100, 0, 0]
+CONST_WALL_TOP = [140, 135, 160]
+CONST_WALL_BOTTOM = [130, 125, 150]
 CONST_SCREEN_CENTER = (32,32)
 # MAIN CONTROL LOOP
-if clientID != -1:
-    print('Connected')
-    while True:
+
+# Starts coppeliasim simulation if not done already
+sim.startSimulation()
+found_cube = False
+print('Connected')
+while True:
         # your code goes here
-        target_location = spot_cube(get_image_top_cam(), CONST_YELLLOW_BOTTOM, CONST_YELLOW_TOP)
+        image = top_image_sensor.get_image()
+        top_image_sensor._update_image()
+        if found_cube:
+            pixel_locations_x, pixel_locations_y = spot_cube(image, CONST_RED_BOTTOM, CONST_RED_TOP)
+            if pixel_locations_x == [] and pixel_locations_y == []:
+                 target_location =  0, 0
+            else:
+                 target_location = np.mean(pixel_locations_x), np.mean(pixel_locations_y)
+            print(target_location)
+            if  target_location == (0, 0):
+                 perform_random_walk()
+            else:  
+                 move_to_target(target_location[0], target_location[1])
+        image = small_image_sensor.get_image()
+        small_image_sensor._update_image()
+        #avoid_wall(image, CONST_WALL_BOTTOM, CONST_WALL_TOP)
+        pixel_locations_x, pixel_locations_y = spot_cube(image, CONST_BROWN_BOTTOM, CONST_BROWN_TOP)
+        # show_image(image)
+        if len(pixel_locations_x) > 4000 or len(pixel_locations_y) > 4000:
+            # print(len(pixel_locations_x))
+            found_cube = True
+            # print(found_cube)
+            continue
+        else:
+            found_cube = False
+        if found_cube is False:
+            red_x, red_y = spot_cube(image, CONST_RED_BOTTOM, CONST_RED_TOP)
+            if len(red_x) > 2000 or len(red_y) > 2000:
+                set_speed(-15, -15)
+
+        if pixel_locations_x == [] and pixel_locations_y == []:
+            target_location =  0, 0
+        else:
+             target_location = np.mean(pixel_locations_x), np.mean(pixel_locations_y)
         print(target_location)
         if  target_location == (0, 0):
             perform_random_walk()
         else:  
             move_to_target(target_location[0], target_location[1])
-    # End connection
-    sim.simxGetPingTime(clientID)
-    sim.simxFinish(clientID)
-else:
-    print('Failed connecting to remote API server')
-print('Program ended')

@@ -1,162 +1,206 @@
-import sim
+from coppeliasim_zmqremoteapi_client import *
+from enum import Enum
 import numpy as np
 import matplotlib.pyplot as plt
-from enum import Enum
+import struct
 
 
 class Direction(Enum):
     """
-       Enum representing the direction of the motor rotation.
+   Enum representing the direction of the motor rotation.
 
-       Attributes:
-           CLOCKWISE: Represents clockwise rotation.
-           COUNTERCLOCKWISE: Represents counterclockwise rotation.
-       """
-
+   Attributes:
+       CLOCKWISE: Represents clockwise rotation.
+       COUNTERCLOCKWISE: Represents counterclockwise rotation.
+    """
     CLOCKWISE = 1
     COUNTERCLOCKWISE = -1
 
 
-# ACTUATORS
+class DeviceNames(Enum):
+    """
+    Enum representing different devices for the coppeliasim tasks.
+
+    Attributes:
+       MOTOR_LEFT_LINE: The left motor as seen from the back of the robot of the linefollower task.
+       MOTOR_RIGHT_LINE: The right motor as seen from the back of the robot of the linefollower task.
+       IMAGE_SENSOR_LINE: The camera of the linefollower task.
+       TOP_IMAGE_SENSOR_OS: Top camera for the object sorting task
+       SMALL_IMAGE_SENSOR_OS: Bottom small camera for the object sorting task
+       MOTOR_LEFT_OS: The left motor as seen from the back of the robot of the object sorting task.
+       MOTOR_RIGHT_OS: The right motor as seen from the back of the robot of the object sorting task.
+       ROBOT_OS: The robot of the object sorting task.
+
+    """
+    MOTOR_LEFT_LINE = "/LineTracer/DynamicLeftJoint"
+    MOTOR_RIGHT_LINE = "/LineTracer/DynamicRightJoint"
+    IMAGE_SENSOR_LINE = "/LineTracer/Vision_sensor"
+
+    TOP_IMAGE_SENSOR_OS = "/dr12/dr12_top_camera"
+    SMALL_IMAGE_SENSOR_OS = "/dr12/dr12_small_camera"
+    MOTOR_LEFT_OS = "/dr12/dr12_leftJoint_"
+    MOTOR_RIGHT_OS = "/dr12/dr12_rightJoint_"
+    ROBOT_OS = "/dr12"
+
 
 class CoppeliaComponent:
-    def __init__(self, clientID):
-        self.clientID = clientID
+    def __init__(self, handle, sim):
+        self._handle = handle
+        self._sim = sim
 
 
+# Generic robot class
+class Robot(CoppeliaComponent):
+    def __init__(self, sim, ObjectName):
+        """_summary_
+
+		Args:
+			sim (_type_): The sim instance created when connecting to the simulator.
+			ObjectName (_type_): Enum representing the name of the robot
+		"""
+
+        assert isinstance(ObjectName, DeviceNames)
+        handle = sim.getObject(ObjectName.value)
+        super().__init__(handle, sim)
+
+    def set_integer_signal(self, signal_name, signal_value):
+        self._sim.setIntegerSignal(signal_name, signal_value)
+
+    def get_string_signal(self, signal_name):
+        return self._sim.getStringSignal(signal_name)
+
+class Robot_OS(Robot):
+    def __init__(self, sim, ObjectName):
+        """_summary_
+        Robot class for the wall_e object soring task
+		Args:
+			sim (_type_): The sim instance created when connecting to the simulator.
+			ObjectName (_type_): Enum representing the name of the robot
+		"""
+
+        assert isinstance(ObjectName, DeviceNames)
+        super().__init__(sim, ObjectName)
+
+    def compress(self):
+        """
+        Compresses boxes for the object sorting task
+		"""
+        self.set_integer_signal("compress", 1)
+
+    def get_battery(self):
+        """
+        Gets current battery value of the robot
+
+		Returns:
+			String: battery value
+		"""
+        return str(self.get_string_signal("battery"))
+
+    def get_bumper_sensor(self):
+        """
+        Gets the bumper sensor reading of the robot
+
+		Returns:
+			Array[Int]: bumper sensor readings as a 3 dimensional array
+		"""
+        response = self.get_string_signal("bumper_sensor")
+        bumper_readings = struct.unpack('3f', response)
+        return bumper_readings
+
+    def get_sonar_sensor(self):
+        """
+        returns distance to object
+
+		Returns:
+			Int: distance or -1 if no data
+		"""
+        response = self.get_string_signal("sonar_sensor")
+        sonar_dist = struct.unpack('f', response)[0]
+        return sonar_dist
+
+
+# General motor class
 class Motor(CoppeliaComponent):
-    """
-      Simplified version of the pyBricks motor class, especially adapted to Coppelia.
-
-      Attributes:
-          motor_port (int): The motor port number, either 1 or 2.
-          direction (Direction): The direction of the motor rotation, either CLOCKWISE or COUNTERCLOCKWISE.
-      """
-
-    other_motor = None
-
-    def __init__(self, motor_port, direction, clientID):
+    def __init__(self, sim, ObjectName, direction):
         """
-            Initializes a Motor instance with the specified motor port and direction.
+        Simplified version of the pyBricks motor class, especially adapted to Coppelia.
 
-            Args:
-            motor_port (int): The motor port number, either 1 or 2 (that's applicable only for the coppelia sim).
-            direction (Direction): The direction of the motor rotation, either CLOCKWISE or COUNTERCLOCKWISE.
+        :param sim: The sim instance created when connecting to the simulator.
+        :param ObjectName: Enum representing the name of the motor, this can be MOTOR_LEFT_LINE, MOTOR_RIGHT_LINE, MOTOR_LEFT_OS or MOTOR_RIGHT_OS
+        :param direction: The direction of the motor rotation, either CLOCKWISE or COUNTERCLOCKWISE.
         """
-
-        super().__init__(clientID)
-        assert motor_port in ('A', 'B'), "Motor port must be either A or B in the coppelia simulation!"
         assert isinstance(direction, Direction), "Direction must be an instance of Direction enum"
+        assert isinstance(ObjectName, DeviceNames), "ObjectName should be an instance of CoppeliaComponent enum"
 
-        self.motor_port = motor_port
+        handle = sim.getObject(ObjectName.value)
+        super().__init__(handle, sim)
+
         self.direction = direction
-        self.speed = 0
-
-        if Motor.other_motor is None:
-            Motor.other_motor = self
-        else:
-            self.other_motor = Motor.other_motor
-            Motor.other_motor.other_motor = self
-
-    def __set_speed(self, speed_l, speed_r):
-        """
-            Private method to set the speed of the left and right motors in the simulation.
-
-            Args:
-                speed_l (float): The desired speed for the left motor.
-                speed_r (float): The desired speed for the right motor.
-        """
-
-        velocities = sim.simxPackFloats([speed_l, speed_r])
-        sim.simxSetStringSignal(clientID=self.clientID, signalName="motors", signalValue=velocities,
-                                operationMode=sim.simx_opmode_blocking)
 
     def run(self, speed):
         """
-            Sets the speed of the motor based on the motor port and direction.
+        Sets the speed of the motor based on the motor port and direction.
 
-            Args:
-            speed (float): The desired speed for the motor.
+        :param speed: The desired speed for the motor.
         """
-
-        self.speed = speed
-        speed_l = self.speed * self.direction.value
-        speed_r = self.other_motor.speed * self.other_motor.direction.value
-
-        if self.motor_port == 'A':
-            self.__set_speed(speed_l, speed_r)
-        else:
-            self.__set_speed(speed_r, speed_l)
+        self._sim.setJointTargetVelocity(self._handle, speed * self.direction.value)
 
 
-# SENSORS
-
-class ColorSensor(CoppeliaComponent):
-    """Color Sensor for the CoppeliaSim environment."""
-
-    def __init__(self, clientID):
-        """Initialize a ColorSensor instance."""
-        super().__init__(clientID)
-
-        self.image = self._get_image_sensor()
-
-    def _get_image_sensor(self):
-        return_code, return_value = sim.simxGetStringSignal(clientID=self.clientID, signalName="Sensors",
-                                                            operationMode=sim.simx_opmode_blocking)
-        if return_code == 0:
-            image = sim.simxUnpackFloats(return_value)
-            res = int(np.sqrt(len(image) / 3))
-            return self.image_correction(image, res)
-        else:
-            return return_code
-
-    def image_correction(self, image, res):
+# General image sensor class
+class ImageSensor(CoppeliaComponent):
+    def __init__(self, sim, ObjectName):
         """
-        This function can be applied to images coming directly out of CoppeliaSim.
-        It turns the 1-dimensional array into a more useful res*res*3 array, with the first
-        two dimensions corresponding to the coordinates of a pixel and the third dimension to the
-        RGB values. Aspect ratio of the image is assumed to be square (1x1).
+        Color Sensor for the CoppeliaSim environment.
 
-        :param image: the image as a 1D array
-        :param res: the resolution of the image, e.g. 64
-        :return: an array of shape res*res*3
+        :param sim: The sim instance created when connecting to the simulator.
+        :param ObjectName: Enum representing the name of the sensor, this can be IMAGE_SENSOR_LINE, TOP_IMAGE_SENSOR_OS or SMALL_IMAGE_SENSOR_OS.
         """
+        assert isinstance(ObjectName, DeviceNames), "ObjectName should be an instance of CoppeliaComponent enum"
+        handle = sim.getObject(ObjectName.value)
+        super().__init__(handle, sim)
 
-        image = [int(x * 255) for x in image]
-        image = np.array(image).reshape((res, res, 3))
+        self._update_image()
+
+    def _update_image(self):
+        """
+        Updates self.image, should be run once before getting image data in the main loop
+		"""
+        img, res = self._sim.getVisionSensorImg(self._handle)
+
+        image_data = np.frombuffer(img, np.uint8)
+        image = image_data.reshape([res[0], res[1], 3])  # the 3 because of rgb
         image = np.flip(m=image, axis=0)
-        return image
 
-    def color(self):
-        pass  # TODO
+        self.image = image
+
+    def get_image(self):
+        """
+		Returns image data as an np array
+		Returns:
+			np.array, shape = (resx,resy,3): the current image stored in self.image
+		"""
+        return self.image
 
     def ambient(self):
         """
-              Calculate the ambient light intensity of the image.
+        Calculate the ambient light intensity of the image.
 
-              Returns:
-                  intensity (float): The ambient light intensity, ranging from 0% (dark) to 100% (bright)
-              """
-
+        :return (float): The ambient light intensity, ranging from 0% (dark) to 100% (bright)
+        """
         return np.mean(self.image) / 255 * 100
 
     def reflection(self):
         """
         Measures the reflection of a surface using a red light.
 
-        Returns:
-            Reflection, ranging from 0% (no reflection) to
-            100% (high reflection).
+        :return (float): Reflection, ranging from 0% (no reflection) to 100% (high reflection).
         """
         return np.mean(self.image[:, :, 0] / 255 * 100)
 
     def rgb(self):
         """
-        Measure the reflection of a surface using red, green, and blue channels of the image.
-
-        Returns:
-            Tuple of reflections for red, green, and blue light, each
-            ranging from 0.0% (no reflection) to 100.0% (high reflection).
+         Measure the reflection of a surface using red, green, and blue channels of the image.
+        :return: Tuple of reflections for red, green, and blue light, each ranging from 0.0% (no reflection) to 100.0% (high reflection).
         """
 
         red = np.mean(self.image[:, :, 0]) / 255 * 100
@@ -166,9 +210,7 @@ class ColorSensor(CoppeliaComponent):
         return red, green, blue
 
 
-# HELPER FUNCTIONS
-
-
+# Helper function
 def show_image(image):
     plt.imshow(image)
     plt.show()
