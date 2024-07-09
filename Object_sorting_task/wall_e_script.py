@@ -33,9 +33,6 @@ def set_speed(speed_l, speed_r):
     right_motor.run(speed_r)
 
 def perform_random_walk():
-    speed = 5
-    left_motor = np.random.randint(1, 15)
-    right_motor = np.random.randint(1,15)
     if np.random.randint(1, 10) <= 3:
         if np.random.choice([True, True, False]):
             set_speed(0, 2)
