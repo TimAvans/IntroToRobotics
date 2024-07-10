@@ -33,11 +33,11 @@ def set_speed(speed_l, speed_r):
     right_motor.run(speed_r)
 
 def perform_random_walk():
-    if np.random.randint(1, 10) <= 3:
-        if np.random.choice([True, True, False]):
-            set_speed(0, 2)
-        else:
-            set_speed(2, 0)
+    #if np.random.randint(1, 10) <= 3:
+    if np.random.choice([True, True, True, True]):
+        set_speed(0, 1)
+    else:
+        set_speed(1, 0)
 
 def in_range(pixel, color_bottom, color_top):
     if  pixel[0] < color_bottom[0] or pixel[0] > color_top[0]:
@@ -70,8 +70,8 @@ def avoid_wall(image, color_bottom, color_top):
         set_speed(10, 0)
 
 def move_to_target(x, y):
-    left_motor = 2
-    right_motor = 2
+    left_motor = 4
+    right_motor = 4
 
     if  x > CONST_SCREEN_CENTER[0]:
         left_motor += 2
@@ -86,7 +86,7 @@ CONST_NEAREST_DISTANCE = 0.22
 CONST_YELLOW_TOP = [255, 255, 80]
 CONST_YELLLOW_BOTTOM = [235, 235, 0]
 CONST_BROWN_TOP = [255, 100, 70]
-CONST_BROWN_BOTTOM = [20, 0, 0]
+CONST_BROWN_BOTTOM = [20, 20, 0]
 CONST_GREEN_TOP = [50, 255, 50]
 CONST_GREEN_BOTTOM = [0, 150, 0]
 CONST_RED_TOP = [255, 20, 20]
@@ -94,49 +94,104 @@ CONST_RED_BOTTOM = [100, 0, 0]
 CONST_WALL_TOP = [140, 135, 160]
 CONST_WALL_BOTTOM = [130, 125, 150]
 CONST_SCREEN_CENTER = (32,32)
+CONST_BATTERY_BREAKPOINT = 20
+
 # MAIN CONTROL LOOP
+def handle_battery():
+    if  robot.get_battery() <= CONST_BATTERY_BREAKPOINT:
+        # if the battery is low enough we have to go search for charging platform (yellow field)
+        pixel_locations_x, pixel_locations_y = spot_cube(image, CONST_YELLLOW_BOTTOM, CONST_YELLOW_TOP)
+        if pixel_locations_x == [] and pixel_locations_y == []:         
+            target_location =  0, 0
+        else:
+            target_location = np.mean(pixel_locations_x), np.mean(pixel_locations_y)
+
+        if  target_location == (0,0):
+            perform_random_walk()
+        else:
+            move_to_target(target_location[0], target_location[1])
+
+def move_to_brown_cube():
+    image = small_image_sensor.get_image()
+    small_image_sensor._update_image()
+    pixel_locations_x, pixel_locations_y = spot_cube(image, CONST_BROWN_BOTTOM, CONST_BROWN_TOP)
+    length_loc_x = len(pixel_locations_x)
+    length_loc_y = len(pixel_locations_y)
+    
+    if  length_loc_x > 4000 or  length_loc_y > 4000:
+        set_speed(15, 15)
+        robot.compress()
+
+    return pixel_locations_x, pixel_locations_y, False
+
+def move_to_green_cube():
+    image = small_image_sensor.get_image()
+    small_image_sensor._update_image()
+    # Searching for a green cube
+    pixel_locations_x, pixel_locations_y = spot_cube(image, CONST_GREEN_BOTTOM, CONST_GREEN_TOP)
+    length_loc_x = len(pixel_locations_x)
+    length_loc_y = len(pixel_locations_y)
+    if  length_loc_x > 1000 or  length_loc_y > 1000:
+        return pixel_locations_x, pixel_locations_y, True
+    else:
+        return pixel_locations_x, pixel_locations_y, False
 
 # Starts coppeliasim simulation if not done already
 sim.startSimulation()
 found_cube = False
+holding_b_box = False
+
 print('Connected')
 while True:
-        # your code goes here
+        # When brown cube is found move to red target
         image = top_image_sensor.get_image()
         top_image_sensor._update_image()
+        
         if found_cube:
             pixel_locations_x, pixel_locations_y = spot_cube(image, CONST_RED_BOTTOM, CONST_RED_TOP)
             if pixel_locations_x == [] and pixel_locations_y == []:
                  target_location =  0, 0
             else:
                  target_location = np.mean(pixel_locations_x), np.mean(pixel_locations_y)
-            print(target_location)
+
             if  target_location == (0, 0):
                  perform_random_walk()
             else:  
                  move_to_target(target_location[0], target_location[1])
-        image = small_image_sensor.get_image()
-        small_image_sensor._update_image()
-        #avoid_wall(image, CONST_WALL_BOTTOM, CONST_WALL_TOP)
-        pixel_locations_x, pixel_locations_y = spot_cube(image, CONST_BROWN_BOTTOM, CONST_BROWN_TOP)
-        # show_image(image)
-        if len(pixel_locations_x) > 4000 or len(pixel_locations_y) > 4000:
-            # print(len(pixel_locations_x))
-            found_cube = True
-            # print(found_cube)
-            continue
+        
+        # Searching for green cube and move to it, when close turn found_cube to true so we dont move out of the way
+        if holding_b_box == False:
+            pixel_locations_x, pixel_locations_y, found_cube = move_to_green_cube()
+            
+            # If we hold a black box put it in red zone to burn it
+            image = small_image_sensor.get_image()
+            small_image_sensor._update_image()
+            # Searching for a black cube
+            pixel_locations_x, pixel_locations_y = spot_cube(image, [0, 0, 0], [20,20,20])
+            length_loc_x = len(pixel_locations_x)
+            length_loc_y = len(pixel_locations_y)
+            if  length_loc_x > 2000 or  length_loc_y > 2000:
+                holding_b_box = True
+            else:
+                holding_b_box = False
+
+            if found_cube == False:       
+                # Searching for a brown cube if brown cube is found crush it
+                pixel_locations_x, pixel_locations_y, found_cube = move_to_brown_cube()
         else:
-            found_cube = False
-        if found_cube is False:
-            red_x, red_y = spot_cube(image, CONST_RED_BOTTOM, CONST_RED_TOP)
-            if len(red_x) > 2000 or len(red_y) > 2000:
-                set_speed(-15, -15)
+            if pixel_locations_y == [] and pixel_locations_x == []:
+                red_x, red_y = spot_cube(image, CONST_RED_BOTTOM, CONST_RED_TOP)
+                if len(red_x) > 2500 or len(red_y) > 2500:
+                    for i in range(15):
+                        set_speed(-15, -15)
 
         if pixel_locations_x == [] and pixel_locations_y == []:
             target_location =  0, 0
         else:
              target_location = np.mean(pixel_locations_x), np.mean(pixel_locations_y)
+
         print(target_location)
+
         if  target_location == (0, 0):
             perform_random_walk()
         else:  
