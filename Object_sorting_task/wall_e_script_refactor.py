@@ -3,6 +3,20 @@ from coppeliasim_zmqremoteapi_client import *
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
+CONST_NEAREST_DISTANCE = 0.22
+CONST_YELLOW_TOP = [255, 255, 80]
+CONST_YELLLOW_BOTTOM = [235, 235, 0]
+CONST_BROWN_TOP = [255, 100, 70]
+CONST_BROWN_BOTTOM = [20, 20, 0]
+CONST_GREEN_TOP = [75, 255, 50]
+CONST_GREEN_BOTTOM = [0, 75, 0]
+CONST_RED_TOP = [255, 20, 20]
+CONST_RED_BOTTOM = [75, 0, 0]
+CONST_WALL_TOP = [140, 135, 160]
+CONST_WALL_BOTTOM = [130, 125, 150]
+CONST_SCREEN_CENTER = (32,32)
+CONST_BATTERY_BREAKPOINT = 20
+
 client = RemoteAPIClient()
 sim = client.require("sim")
 
@@ -33,11 +47,7 @@ def set_speed(speed_l, speed_r):
     right_motor.run(speed_r)
 
 def perform_random_walk():
-    #if np.random.randint(1, 10) <= 3:
-    if np.random.choice([True, True, True, True]):
-        set_speed(0, 1)
-    else:
-        set_speed(1, 0)
+    set_speed(0, 1)
 
 def in_range(pixel, color_bottom, color_top):
     if  pixel[0] < color_bottom[0] or pixel[0] > color_top[0]:
@@ -69,8 +79,7 @@ def avoid_wall(image, color_bottom, color_top):
     if	len(pixel_locations_x) > 50 or len(pixel_locations_y) > 50:
         set_speed(10, 0)
 
-def move_to_target(x, y):
-    
+def move_to_target(x, y):  
     if x == [] and y == []:
         perform_random_walk()
         return
@@ -84,22 +93,7 @@ def move_to_target(x, y):
     else:
         right_motor += 2
         # print("Right")
-    #TODO: Adjust speed to distance of object        
     set_speed(left_motor, right_motor)
-
-CONST_NEAREST_DISTANCE = 0.22
-CONST_YELLOW_TOP = [255, 255, 80]
-CONST_YELLLOW_BOTTOM = [235, 235, 0]
-CONST_BROWN_TOP = [255, 100, 70]
-CONST_BROWN_BOTTOM = [20, 20, 0]
-CONST_GREEN_TOP = [50, 255, 50]
-CONST_GREEN_BOTTOM = [0, 150, 0]
-CONST_RED_TOP = [255, 20, 20]
-CONST_RED_BOTTOM = [100, 0, 0]
-CONST_WALL_TOP = [140, 135, 160]
-CONST_WALL_BOTTOM = [130, 125, 150]
-CONST_SCREEN_CENTER = (32,32)
-CONST_BATTERY_BREAKPOINT = 20
 
 # MAIN CONTROL LOOP
 def handle_battery(image):
@@ -141,10 +135,7 @@ def find_burn_zone(top_image):
         target_location = np.mean(pixel_locations_x), np.mean(pixel_locations_y)
     return (target_location[0], target_location[1])
 
-
-
 def make_action_decision(top_image, lower_image) -> str:
-    battery_percentage = robot.get_battery()
     # red_pixels_x, red_pixels_y = spot_cube(top_image, CONST_RED_BOTTOM, CONST_RED_TOP)
     br_pixels_x, br_pixels_y = spot_cube(lower_image, CONST_BROWN_BOTTOM, CONST_BROWN_TOP)
     gr_pixels_x, gr_pixels_y = spot_cube(lower_image, CONST_GREEN_BOTTOM, CONST_GREEN_TOP)
@@ -153,17 +144,25 @@ def make_action_decision(top_image, lower_image) -> str:
     br_total = len(br_pixels_x) + len(br_pixels_y)
     gr_total = len(gr_pixels_x) + len(gr_pixels_y)
     bl_total = len(bl_pixels_x) + len(bl_pixels_y)
-
+    
     if gr_total > 7500:
         return "holding_green"
-    elif bl_total > 5000:
+    elif bl_total > 8000:
         return "holding_black"
-    elif  br_total < gr_total:
+    elif  gr_total > br_total:
         return "move_green"
     elif br_total > gr_total:
         return "move_brown"
     else:
         return "random_walk"
+
+def move_away_from_burnzone(lower_image):
+    red_pixels_x, red_pixels_y = spot_cube(lower_image, CONST_RED_BOTTOM, CONST_RED_TOP)
+    red_total = len(red_pixels_x) + len(red_pixels_y)
+
+    if red_total > 500:
+        for i in range(5):
+            set_speed(-15) 
 
 # Starts coppeliasim simulation if not done already
 sim.startSimulation()
@@ -172,29 +171,28 @@ holding_b_box = False
 
 print('Connected')
 while True:
-        # When brown cube is found move to red target
         top_image = top_image_sensor.get_image()
         top_image_sensor._update_image()
         lower_image = small_image_sensor.get_image()
         small_image_sensor._update_image()
 
-        # Find something to decide on task to do ???? 
-        # Probably input images i think so make function that returns a decision i think
-        # as in do something similar as the move to functions but then just return a decision? this also fixes move to red zone i think
+        # Find the decision we have to make
         choice = make_action_decision(top_image, lower_image)
         print(choice)
         # Priority 1: functionality (Load when needed)
-        # handle_battery() <-- function doesn't work batter returns string?????
+        # handle_battery() <-- function doesn't work batter returns string?
 
         # Priority 1.5: When holding a green cube find and go to burn zone and burn it
         if choice == "holding_green":
             target_location_x, target_location_y = find_burn_zone(top_image)
             move_to_target(np.mean(target_location_x), np.mean(target_location_y))
-        
+            move_away_from_burnzone(lower_image)
+
         # Priority 1.7: When holding a black box find and go to burn zone and burn it
         elif choice == "holding_black":
             target_location_x, target_location_y = find_burn_zone(top_image)
             move_to_target(np.mean(target_location_x), np.mean(target_location_y))
+            move_away_from_burnzone(lower_image)
 
         # Priority 2: Find and crush brown cube
         elif  choice == "move_brown":
@@ -209,52 +207,3 @@ while True:
         # base function: (random walk)
         else:
             perform_random_walk()
-
-        # if found_cube:
-        #     pixel_locations_x, pixel_locations_y = spot_cube(top_image, CONST_RED_BOTTOM, CONST_RED_TOP)
-        #     if pixel_locations_x == [] and pixel_locations_y == []:
-        #          target_location =  0, 0
-        #     else:
-        #          target_location = np.mean(pixel_locations_x), np.mean(pixel_locations_y)
-
-        #     if  target_location == (0, 0):
-        #          perform_random_walk()
-        #     else:  
-        #          move_to_target(target_location[0], target_location[1])
-        
-        # # Searching for green cube and move to it, when close turn found_cube to true so we dont move out of the way
-        # if holding_b_box == False:
-        #     pixel_locations_x, pixel_locations_y, found_cube = move_to_green_cube()
-            
-        #     # If we hold a black box put it in red zone to burn it
-
-        #     # Searching for a black cube
-        #     pixel_locations_x, pixel_locations_y = spot_cube(image, [0, 0, 0], [20,20,20])
-        #     length_loc_x = len(pixel_locations_x)
-        #     length_loc_y = len(pixel_locations_y)
-        #     if  length_loc_x > 2000 or  length_loc_y > 2000:
-        #         holding_b_box = True
-        #     else:
-        #         holding_b_box = False
-
-        #     if found_cube == False:       
-        #         # Searching for a brown cube if brown cube is found crush it
-        #         pixel_locations_x, pixel_locations_y, found_cube = move_to_brown_cube()
-        # else:
-        #     if pixel_locations_y == [] and pixel_locations_x == []:
-        #         red_x, red_y = spot_cube(image, CONST_RED_BOTTOM, CONST_RED_TOP)
-        #         if len(red_x) > 2500 or len(red_y) > 2500:
-        #             for i in range(15):
-        #                 set_speed(-15, -15)
-
-        # if pixel_locations_x == [] and pixel_locations_y == []:
-        #     target_location =  0, 0
-        # else:
-        #      target_location = np.mean(pixel_locations_x), np.mean(pixel_locations_y)
-
-        # print(target_location)
-
-        # if  target_location == (0, 0):
-        #     perform_random_walk()
-        # else:  
-        #     move_to_target(target_location[0], target_location[1])
